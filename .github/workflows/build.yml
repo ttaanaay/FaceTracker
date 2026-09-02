@@ -2,33 +2,106 @@ name: Build Face Tracker EXE
 
 on:
   push:
+    branches:
+      - main
+
   workflow_dispatch:
 
 jobs:
   build:
+
     runs-on: windows-latest
 
     steps:
-      - name: Checkout repository
+
+      # ==============================
+      # DOWNLOAD SOURCE CODE
+      # ==============================
+
+      - name: Checkout Repository
         uses: actions/checkout@v4
+
+
+      # ==============================
+      # SHOW FILES (DEBUG)
+      # ==============================
+
+      - name: Show Project Files
+        shell: cmd
+        run: |
+          echo ==============================
+          echo PROJECT FILES
+          echo ==============================
+          dir
+          echo.
+          echo ALL FILES
+          echo ==============================
+          dir /s
+
+
+      # ==============================
+      # INSTALL PYTHON
+      # ==============================
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+
+      # ==============================
+      # INSTALL DEPENDENCIES
+      # ==============================
+
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build EXE
+
+      # ==============================
+      # BUILD EXE
+      # ==============================
+
+      - name: Build FaceTracker EXE
+        shell: cmd
         run: |
           pyinstaller --onedir --name FaceTracker main.py
 
-      - name: Upload EXE
+
+      # ==============================
+      # COPY AVATAR
+      # ==============================
+
+      - name: Copy Avatar PNG
+        shell: cmd
+        run: |
+          copy avatar.png dist\FaceTracker\avatar.png
+
+
+      # ==============================
+      # SHOW BUILD RESULT
+      # ==============================
+
+      - name: Show Build Files
+        shell: cmd
+        run: |
+          echo ==============================
+          echo BUILD RESULT
+          echo ==============================
+          dir dist\FaceTracker
+          echo.
+          dir /s dist\FaceTracker
+
+
+      # ==============================
+      # UPLOAD ARTIFACT
+      # ==============================
+
+      - name: Upload FaceTracker
         uses: actions/upload-artifact@v4
         with:
           name: FaceTracker-Windows
           path: dist/FaceTracker
+          if-no-files-found: error
