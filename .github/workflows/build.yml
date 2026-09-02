@@ -67,7 +67,7 @@ jobs:
       - name: Build FaceTracker EXE
         shell: cmd
         run: |
-          pyinstaller --onedir --name FaceTracker main.py
+          pyinstaller --onedir --name FaceTracker --collect-data mediapipe main.py
 
 
       # ==============================
