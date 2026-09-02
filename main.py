@@ -5,6 +5,9 @@ import cv2
 import mediapipe as mp
 import numpy as np
 
+import tkinter as tk
+from tkinter import filedialog
+
 
 # ============================================================
 # PATH SETTINGS
@@ -34,7 +37,7 @@ BASE_PATH = get_base_path()
 # ถ้า DroidCam ไม่ขึ้น ลอง 1 หรือ 2
 CAMERA_INDEX = 0
 
-# ชื่อไฟล์ Avatar
+# ชื่อไฟล์ Avatar เริ่มต้น (ใช้ตอนกด Cancel ตอนเลือกไฟล์)
 AVATAR_FILENAME = "avatar.png"
 
 AVATAR_FILE = os.path.join(
@@ -47,8 +50,13 @@ AVATAR_FILE = os.path.join(
 # ค่าสูง = ตามเร็วขึ้น
 SMOOTHING = 0.25
 
-# ขนาด Avatar เทียบกับใบหน้า
-AVATAR_SCALE = 1.6
+# ขนาด Avatar เริ่มต้น เทียบกับใบหน้า (ปรับได้ตอนรันด้วยปุ่ม +/-)
+DEFAULT_AVATAR_SCALE = 1.6
+
+# ขอบเขตขนาดที่ปรับได้
+MIN_AVATAR_SCALE = 0.3
+MAX_AVATAR_SCALE = 5.0
+SCALE_STEP = 0.1
 
 
 # ============================================================
@@ -69,60 +77,130 @@ def show_error(message):
 
 
 # ============================================================
+# TKINTER (สำหรับหน้าต่างเลือกไฟล์)
+# ============================================================
+
+tk_root = tk.Tk()
+tk_root.withdraw()
+
+
+def choose_avatar_file(initial_dir):
+    """
+    เปิดหน้าต่างให้เลือกไฟล์ Avatar (PNG)
+    คืนค่า path ที่เลือก หรือ None ถ้ากด Cancel
+    """
+
+    if not os.path.isdir(initial_dir):
+        initial_dir = BASE_PATH
+
+    path = filedialog.askopenfilename(
+        parent=tk_root,
+        title="เลือกไฟล์ Avatar (PNG พื้นหลังโปร่งใส)",
+        initialdir=initial_dir,
+        filetypes=[
+            ("PNG Files", "*.png"),
+            ("All Files", "*.*")
+        ]
+    )
+
+    tk_root.update()
+
+    return path if path else None
+
+
+# ============================================================
 # LOAD AVATAR
 # ============================================================
+
+def load_avatar_image(path, exit_on_fail=True):
+    """
+    โหลดและตรวจสอบไฟล์ Avatar
+    คืนค่า image ถ้าโหลดสำเร็จ หรือ None ถ้าล้มเหลว (เมื่อ exit_on_fail=False)
+    """
+
+    print("\nกำลังโหลด Avatar:")
+    print(path)
+
+    img = cv2.imread(
+        path,
+        cv2.IMREAD_UNCHANGED
+    )
+
+    if img is None:
+
+        message = (
+            f"ไม่พบไฟล์ Avatar หรือเปิดไฟล์ไม่ได้!\n\n"
+            f"{path}"
+        )
+
+        if exit_on_fail:
+            show_error(message)
+        else:
+            print("\n" + message)
+
+        return None
+
+    # ตรวจสอบ Alpha Channel
+
+    if len(img.shape) < 3:
+
+        message = (
+            "ไฟล์ Avatar ไม่ถูกต้อง\n"
+            "กรุณาใช้ PNG ที่มีพื้นหลังโปร่งใส"
+        )
+
+        if exit_on_fail:
+            show_error(message)
+        else:
+            print("\n" + message)
+
+        return None
+
+    if img.shape[2] != 4:
+
+        print("\nWARNING: PNG ไม่มี Alpha Channel")
+        print("แนะนำให้ใช้ PNG พื้นหลังโปร่งใส")
+
+    print("\nAvatar Loaded Successfully!")
+
+    print(
+        f"Avatar Size: "
+        f"{img.shape[1]} x {img.shape[0]}"
+    )
+
+    return img
+
 
 print("Face Tracker Starting...")
 print("Program Path:")
 print(BASE_PATH)
 
-print("\nกำลังโหลด Avatar:")
-print(AVATAR_FILE)
+print("\nกรุณาเลือกไฟล์ Avatar (PNG พื้นหลังโปร่งใส)...")
+print("(ถ้ากด Cancel จะใช้ไฟล์ avatar.png เริ่มต้นแทน)")
 
+chosen_avatar_path = choose_avatar_file(BASE_PATH)
 
-avatar = cv2.imread(
-    AVATAR_FILE,
-    cv2.IMREAD_UNCHANGED
+if chosen_avatar_path is None:
+
+    print("\nไม่ได้เลือกไฟล์ใหม่ ใช้ไฟล์เริ่มต้น:")
+    print(AVATAR_FILE)
+
+    chosen_avatar_path = AVATAR_FILE
+
+avatar = load_avatar_image(
+    chosen_avatar_path,
+    exit_on_fail=True
 )
 
-
-if avatar is None:
-
-    show_error(
-        f"ไม่พบไฟล์ Avatar!\n\n"
-        f"กรุณานำไฟล์ {AVATAR_FILENAME}\n"
-        f"ไปไว้ที่:\n\n"
-        f"{BASE_PATH}"
-    )
+current_avatar_path = chosen_avatar_path
 
 
-# ตรวจสอบ Alpha Channel
-
-if len(avatar.shape) < 3:
-
-    show_error(
-        "ไฟล์ Avatar ไม่ถูกต้อง\n"
-        "กรุณาใช้ PNG ที่มีพื้นหลังโปร่งใส"
-    )
+def get_avatar_aspect_ratio(img):
+    h, w = img.shape[:2]
+    return h / w
 
 
-if avatar.shape[2] != 4:
-
-    print(
-        "\nWARNING: PNG ไม่มี Alpha Channel"
-    )
-
-    print(
-        "แนะนำให้ใช้ PNG พื้นหลังโปร่งใส"
-    )
-
-
-print("\nAvatar Loaded Successfully!")
-
-print(
-    f"Avatar Size: "
-    f"{avatar.shape[1]} x {avatar.shape[0]}"
-)
+avatar_aspect_ratio = get_avatar_aspect_ratio(avatar)
 
 
 # ============================================================
@@ -204,6 +282,13 @@ smooth_y = None
 
 smooth_w = None
 smooth_h = None
+
+
+# ============================================================
+# RUNTIME STATE (ปรับได้ตอนรันโปรแกรม)
+# ============================================================
+
+avatar_scale = DEFAULT_AVATAR_SCALE
 
 
 # ============================================================
@@ -352,7 +437,9 @@ print("FACE AVATAR TRACKER STARTED")
 print("=" * 60)
 
 print("\nControls:")
-print("Q = Exit")
+print("Q       = Exit")
+print("+ / -   = ปรับขนาด Avatar")
+print("O       = เปลี่ยนรูป Avatar")
 
 print(
     f"\nCamera Index: "
@@ -361,7 +448,7 @@ print(
 
 print(
     f"Avatar: "
-    f"{AVATAR_FILE}"
+    f"{current_avatar_path}"
 )
 
 print("\n")
@@ -460,16 +547,18 @@ while True:
 
         # ========================
         # AVATAR SIZE
+        # (คงสัดส่วนภาพของ Avatar เอง
+        #  เพื่อไม่ให้ภาพยืด/บิดเบี้ยว)
         # ========================
 
         avatar_w = int(
             face_w
-            * AVATAR_SCALE
+            * avatar_scale
         )
 
         avatar_h = int(
-            face_h
-            * AVATAR_SCALE
+            avatar_w
+            * avatar_aspect_ratio
         )
 
 
@@ -573,6 +662,27 @@ while True:
 
 
     # ========================================================
+    # ON-SCREEN INFO
+    # ========================================================
+
+    info_text = (
+        f"Scale: {avatar_scale:.1f}x   "
+        f"[+/-] Resize   [O] Change Avatar   [Q] Quit"
+    )
+
+    cv2.putText(
+        frame,
+        info_text,
+        (10, 25),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (0, 255, 0),
+        2,
+        cv2.LINE_AA
+    )
+
+
+    # ========================================================
     # SHOW RESULT
     # ========================================================
 
@@ -594,6 +704,52 @@ while True:
         break
 
 
+    elif key in (ord("+"), ord("=")):
+
+        avatar_scale = min(
+            MAX_AVATAR_SCALE,
+            round(avatar_scale + SCALE_STEP, 2)
+        )
+
+        print(f"Avatar Scale: {avatar_scale:.1f}x")
+
+
+    elif key in (ord("-"), ord("_")):
+
+        avatar_scale = max(
+            MIN_AVATAR_SCALE,
+            round(avatar_scale - SCALE_STEP, 2)
+        )
+
+        print(f"Avatar Scale: {avatar_scale:.1f}x")
+
+
+    elif key in (ord("o"), ord("O")):
+
+        new_path = choose_avatar_file(
+            os.path.dirname(current_avatar_path)
+        )
+
+        if new_path:
+
+            new_avatar = load_avatar_image(
+                new_path,
+                exit_on_fail=False
+            )
+
+            if new_avatar is not None:
+
+                avatar = new_avatar
+                current_avatar_path = new_path
+                avatar_aspect_ratio = get_avatar_aspect_ratio(avatar)
+
+                # รีเซ็ต smoothing เพื่อไม่ให้ภาพเก่าค้าง
+                smooth_x = None
+                smooth_y = None
+                smooth_w = None
+                smooth_h = None
+
+
 # ============================================================
 # CLEANUP
 # ============================================================
@@ -608,6 +764,8 @@ face_detection.close()
 
 
 cv2.destroyAllWindows()
+
+tk_root.destroy()
 
 
 print("Program Closed")
