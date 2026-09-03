@@ -107,15 +107,23 @@ def choose_avatar_file(initial_dir):
 
 def show_camera_picker(devices, current_index=None):
     """
-    แสดงหน้าต่างรายชื่อกล้องให้เลือก
+    Popup เลือกกล้องสำหรับ Windows
 
-    รองรับ:
-    - บังคับหน้าต่างให้อยู่หน้าสุดและรับ focus ทันที
-    - กดตัวเลขที่อยู่ใน [ ] เพื่อเลือกกล้องทันที โดยไม่ต้องใช้เมาส์
-      เช่น [0] DroidCam -> กด 0 แล้วเลือกทันที
-    - Enter = ตกลงรายการที่เลือก
-    - Esc = ยกเลิก
+    แก้ปัญหา:
+    1. Console แย่ง focus ทำให้ popup พิมพ์ไม่ได้
+    2. กดเลข [index] แล้วเลือกกล้องทันทีโดยไม่ต้องใช้เมาส์
+
+    ตัวอย่าง:
+        [0] USB2.0 VGA UVC WebCam
+        [1] DroidCam Video
+        [2] OBS Virtual Camera
+
+    กด 1 -> เลือก DroidCam Video ทันที
+    Enter -> เลือกรายการที่ highlight
+    Esc -> ยกเลิก
     """
+
+    import ctypes
 
     picker = tk.Toplevel(tk_root)
     picker.title("เลือกกล้อง")
@@ -123,25 +131,13 @@ def show_camera_picker(devices, current_index=None):
     picker.resizable(False, False)
 
     # --------------------------------------------------------
-    # บังคับให้ Popup อยู่หน้าสุด + รับ Focus
+    # สร้าง UI ก่อน เพื่อให้ได้ HWND ที่พร้อมใช้งาน
     # --------------------------------------------------------
-    picker.transient(tk_root)
-
-    # Windows บางครั้ง Console / OpenCV window แย่ง focus
-    # จึงยกหน้าต่างขึ้นมาและบังคับ focus หลายจังหวะ
-    try:
-        picker.attributes("-topmost", True)
-    except tk.TclError:
-        pass
-
-    picker.lift()
-    picker.focus_force()
 
     label = tk.Label(
         picker,
         text="เลือกกล้องที่ต้องการใช้งาน\n"
-             "(กล้องมือถือมักขึ้นชื่อว่า DroidCam / IP Webcam / Virtual Camera)\n"
-             "กดเลขใน [ ] เพื่อเลือกกล้องทันที",
+             "(กดเลขใน [ ] เพื่อเลือกทันที ไม่ต้องคลิก)",
         font=("Tahoma", 10),
         justify="left"
     )
@@ -167,62 +163,85 @@ def show_camera_picker(devices, current_index=None):
                 break
 
     selected = {"index": None}
+    closed = {"value": False}
 
     def finish_with_index(camera_index):
-        """เลือกกล้องตาม index แล้วปิด popup ทันที"""
+        """เลือกกล้องตามเลขใน [ ] และปิด popup ทันที"""
+
+        if closed["value"]:
+            return True
 
         for pos, (idx, name) in enumerate(devices):
-
             if idx == camera_index:
-
                 selected["index"] = idx
 
-                listbox.selection_clear(0, "end")
-                listbox.selection_set(pos)
-                listbox.see(pos)
+                try:
+                    listbox.selection_clear(0, "end")
+                    listbox.selection_set(pos)
+                    listbox.see(pos)
+                except tk.TclError:
+                    pass
 
+                closed["value"] = True
                 picker.destroy()
-
                 return True
 
         return False
 
-    def on_ok():
+    def on_ok(event=None):
+        if closed["value"]:
+            return "break"
 
         sel = listbox.curselection()
 
         if sel:
             selected["index"] = devices[sel[0]][0]
 
+        closed["value"] = True
         picker.destroy()
+        return "break"
 
-    def on_cancel():
-        picker.destroy()
+    def on_cancel(event=None):
+        if not closed["value"]:
+            closed["value"] = True
+            picker.destroy()
 
-    def on_number(event):
+        return "break"
+
+    def on_key(event):
         """
-        กดเลข 0-9 แล้วเลือกกล้องตามเลขใน [ ] ทันที
+        รับคีย์จากทุก child widget ใน popup
 
-        เช่น:
-            [0] DroidCam -> กด 0
-            [1] Integrated Camera -> กด 1
-            [2] Virtual Camera -> กด 2
+        สำคัญ:
+        bind ที่ Toplevel อย่างเดียวอาจไม่ทำงานตามที่คาด
+        เมื่อ focus อยู่บน Listbox/Button
+        จึงใช้ bind_all ระหว่างที่ popup เปิดอยู่
         """
 
         key = event.keysym
 
-        # รองรับ Numeric Keypad ด้วย
+        # ตัวเลขแถวบน keyboard: 0-9
+        # และ Numpad: KP_0 ... KP_9
         if key.startswith("KP_"):
-            key = key.replace("KP_", "")
+            key = key[3:]
 
-        if key.isdigit() and len(key) == 1:
-
+        if len(key) == 1 and key.isdigit():
             camera_index = int(key)
 
             if finish_with_index(camera_index):
                 return "break"
 
+        if key in ("Return", "KP_Enter"):
+            return on_ok(event)
+
+        if key == "Escape":
+            return on_cancel(event)
+
         return None
+
+    # --------------------------------------------------------
+    # Buttons
+    # --------------------------------------------------------
 
     btn_frame = tk.Frame(picker)
     btn_frame.pack(pady=(0, 12))
@@ -245,65 +264,146 @@ def show_camera_picker(devices, current_index=None):
 
     listbox.bind(
         "<Double-Button-1>",
-        lambda e: on_ok()
+        on_ok
     )
 
     # --------------------------------------------------------
-    # Keyboard shortcuts
+    # Keyboard
     # --------------------------------------------------------
 
-    # รับตัวเลขจาก popup โดยตรง
-    picker.bind("<KeyPress>", on_number)
-
-    # Enter = ตกลง
-    picker.bind(
-        "<Return>",
-        lambda e: (on_ok(), "break")[1]
-    )
-
-    # Esc = ยกเลิก
-    picker.bind(
-        "<Escape>",
-        lambda e: (on_cancel(), "break")[1]
+    # ใช้ bind_all เพื่อให้เลขทำงานแม้ focus อยู่ที่ Listbox/Button
+    bind_id = picker.bind_all(
+        "<KeyPress>",
+        on_key,
+        add="+"
     )
 
     # --------------------------------------------------------
-    # Modal + Force Focus
+    # Windows Focus Fix
     # --------------------------------------------------------
 
-    picker.grab_set()
+    picker.transient(tk_root)
 
-    def force_picker_focus():
+    # ทำให้เป็น modal
+    try:
+        picker.grab_set()
+    except tk.TclError:
+        pass
+
+    # ให้ Tk สร้าง HWND ก่อน
+    picker.update_idletasks()
+
+    hwnd = picker.winfo_id()
+
+    def force_windows_foreground():
         """
-        บังคับ popup กลับมาเป็นหน้าต่างที่ active
-        เผื่อ Console หรือหน้าต่างอื่นแย่ง focus ไป
+        ใช้ Win32 API โดยตรง
+
+        Tk focus_force/lift อย่างเดียวไม่พอในบางกรณี
+        โดยเฉพาะเมื่อ EXE มี Console window เป็น foreground
         """
 
         try:
+            if closed["value"] or not picker.winfo_exists():
+                return
 
-            if picker.winfo_exists():
+            picker.deiconify()
+            picker.update_idletasks()
 
-                picker.deiconify()
+            hwnd_local = picker.winfo_id()
+
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+
+            HWND_TOPMOST = -1
+            SWP_NOSIZE = 0x0001
+            SWP_NOMOVE = 0x0002
+            SWP_SHOWWINDOW = 0x0040
+
+            # 1) เอา popup ขึ้นบนสุด
+            user32.SetWindowPos(
+                hwnd_local,
+                HWND_TOPMOST,
+                0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+            )
+
+            # 2) เอาขึ้นด้านหน้า
+            user32.BringWindowToTop(hwnd_local)
+
+            # 3) บังคับให้เป็น foreground window
+            foreground_hwnd = user32.GetForegroundWindow()
+
+            current_thread = kernel32.GetCurrentThreadId()
+
+            if foreground_hwnd:
+                foreground_thread = user32.GetWindowThreadProcessId(
+                    foreground_hwnd,
+                    None
+                )
+
+                if foreground_thread != current_thread:
+                    # Windows อาจ block SetForegroundWindow
+                    # จึง attach input thread ชั่วคราว
+                    attached = user32.AttachThreadInput(
+                        foreground_thread,
+                        current_thread,
+                        True
+                    )
+
+                    try:
+                        user32.SetForegroundWindow(hwnd_local)
+                        user32.SetActiveWindow(hwnd_local)
+                    finally:
+                        if attached:
+                            user32.AttachThreadInput(
+                                foreground_thread,
+                                current_thread,
+                                False
+                            )
+                else:
+                    user32.SetForegroundWindow(hwnd_local)
+                    user32.SetActiveWindow(hwnd_local)
+
+            # 4) Tk focus อีกชั้น
+            picker.lift()
+            picker.focus_force()
+            listbox.focus_set()
+
+        except Exception:
+            # fallback สำหรับกรณีที่ Win32 API ใช้ไม่ได้
+            try:
                 picker.lift()
-
-                try:
-                    picker.attributes("-topmost", True)
-                except tk.TclError:
-                    pass
-
+                picker.attributes("-topmost", True)
                 picker.focus_force()
                 listbox.focus_set()
+            except Exception:
+                pass
 
-        except tk.TclError:
+    # --------------------------------------------------------
+    # บังคับ focus หลายครั้ง
+    # --------------------------------------------------------
+
+    picker.after(0, force_windows_foreground)
+    picker.after(50, force_windows_foreground)
+    picker.after(150, force_windows_foreground)
+    picker.after(350, force_windows_foreground)
+    picker.after(700, force_windows_foreground)
+
+    # ตอนเปิด popup ให้ keyboard พร้อมใช้งานทันที
+    picker.after(100, listbox.focus_set)
+
+    try:
+        tk_root.wait_window(picker)
+    finally:
+        # ล้าง bind_all เมื่อ popup ปิด
+        try:
+            tk_root.unbind_all(
+                "<KeyPress>",
+                bind_id
+            )
+        except Exception:
             pass
-
-    # รอให้ Tk สร้าง window เสร็จก่อน
-    # แล้วบังคับ focus ซ้ำหลายจังหวะเพื่อแก้ปัญหา Windows
-    picker.after(10, force_picker_focus)
-    picker.after(100, force_picker_focus)
-    picker.after(250, force_picker_focus)
-
-    tk_root.wait_window(picker)
 
     return selected["index"]
 
