@@ -495,34 +495,96 @@ def save_camera_index(idx):
 
 def open_camera(idx):
     """
-    เปิดกล้องด้วย index ที่กำหนด พร้อมตั้งค่าความละเอียด
-    คืนค่า VideoCapture object หรือ None ถ้าเปิดไม่ได้
+    เปิดกล้อง Windows แบบ fallback หลาย backend
+
+    DroidCam บางเครื่องถูก enumerate ได้ แต่ไม่ยอมเปิดผ่าน
+    DirectShow (CAP_DSHOW) จาก OpenCV จึงลอง MSMF ต่อทันที
+
+    ลำดับ:
+        1. DirectShow
+        2. Media Foundation
+        3. Default backend
+
+    คืนค่า VideoCapture object หรือ None
     """
 
-    new_cap = cv2.VideoCapture(
-        idx,
-        cv2.CAP_DSHOW
-    )
+    backends = [
+        ("DirectShow", cv2.CAP_DSHOW),
+        ("Media Foundation", cv2.CAP_MSMF),
+        ("Default", cv2.CAP_ANY),
+    ]
 
-    if not new_cap.isOpened():
-        return None
+    for backend_name, backend in backends:
 
-    new_cap.set(
-        cv2.CAP_PROP_FRAME_WIDTH,
-        1280
-    )
+        print(
+            f"กำลังเปิดกล้อง Index {idx} "
+            f"ด้วย {backend_name}..."
+        )
 
-    new_cap.set(
-        cv2.CAP_PROP_FRAME_HEIGHT,
-        720
-    )
+        new_cap = None
 
-    new_cap.set(
-        cv2.CAP_PROP_FPS,
-        30
-    )
+        try:
+            new_cap = cv2.VideoCapture(
+                idx,
+                backend
+            )
 
-    return new_cap
+            if new_cap.isOpened():
+
+                # บาง backend เปิดสำเร็จแต่ grab frame ไม่ได้
+                ok, test_frame = new_cap.read()
+
+                if ok and test_frame is not None:
+
+                    new_cap.set(
+                        cv2.CAP_PROP_FRAME_WIDTH,
+                        1280
+                    )
+
+                    new_cap.set(
+                        cv2.CAP_PROP_FRAME_HEIGHT,
+                        720
+                    )
+
+                    new_cap.set(
+                        cv2.CAP_PROP_FPS,
+                        30
+                    )
+
+                    print(
+                        f"เปิดกล้องสำเร็จด้วย "
+                        f"{backend_name}"
+                    )
+
+                    return new_cap
+
+                print(
+                    f"{backend_name} เปิด device ได้ "
+                    f"แต่ไม่สามารถอ่าน frame ได้"
+                )
+
+            else:
+                print(
+                    f"{backend_name} ไม่สามารถเปิด device ได้"
+                )
+
+        except Exception as e:
+
+            print(
+                f"{backend_name} error: {e}"
+            )
+
+        finally:
+
+            # อย่าปล่อย object ที่จะถูกคืนค่า
+            if new_cap is not None:
+                try:
+                    if not new_cap.isOpened():
+                        new_cap.release()
+                except Exception:
+                    pass
+
+    return None
 
 
 # ============================================================
