@@ -495,17 +495,18 @@ def save_camera_index(idx):
 
 def open_camera(idx):
     """
-    เปิดกล้อง Windows แบบ fallback หลาย backend
+    เปิดกล้อง Windows แบบปลอดภัยสำหรับทั้งกล้องปกติและ Virtual Camera
 
-    DroidCam บางเครื่องถูก enumerate ได้ แต่ไม่ยอมเปิดผ่าน
-    DirectShow (CAP_DSHOW) จาก OpenCV จึงลอง MSMF ต่อทันที
+    ปัญหาของ DroidCam บางรุ่น:
+    - DirectShow เปิด device ไม่ได้
+    - Media Foundation เปิดได้ แต่ stream ไม่รองรับการบังคับ
+      1280x720 หลังเปิด ทำให้ cap.read() ภายหลัง crash ใน OpenCV
 
-    ลำดับ:
-        1. DirectShow
-        2. Media Foundation
-        3. Default backend
-
-    คืนค่า VideoCapture object หรือ None
+    ดังนั้น:
+    - เปิดกล้องก่อน
+    - อ่าน frame จริงเพื่อยืนยัน
+    - ไม่บังคับ resolution ของ Virtual Camera
+    - ใช้ resolution ที่ device ส่งมาเอง
     """
 
     backends = [
@@ -529,44 +530,61 @@ def open_camera(idx):
                 backend
             )
 
-            if new_cap.isOpened():
+            if not new_cap.isOpened():
+                print(
+                    f"{backend_name} ไม่สามารถเปิด device ได้"
+                )
+                if new_cap is not None:
+                    new_cap.release()
+                continue
 
-                # บาง backend เปิดสำเร็จแต่ grab frame ไม่ได้
-                ok, test_frame = new_cap.read()
+            # อ่าน frame จริงก่อนทำอะไรกับ stream
+            ok, test_frame = new_cap.read()
 
-                if ok and test_frame is not None:
-
-                    new_cap.set(
-                        cv2.CAP_PROP_FRAME_WIDTH,
-                        1280
-                    )
-
-                    new_cap.set(
-                        cv2.CAP_PROP_FRAME_HEIGHT,
-                        720
-                    )
-
-                    new_cap.set(
-                        cv2.CAP_PROP_FPS,
-                        30
-                    )
-
-                    print(
-                        f"เปิดกล้องสำเร็จด้วย "
-                        f"{backend_name}"
-                    )
-
-                    return new_cap
-
+            if not ok or test_frame is None:
                 print(
                     f"{backend_name} เปิด device ได้ "
                     f"แต่ไม่สามารถอ่าน frame ได้"
                 )
+                new_cap.release()
+                continue
 
-            else:
+            # ตรวจสอบ frame ป้องกัน OpenCV crash จาก Mat ที่ผิดปกติ
+            if (
+                not hasattr(test_frame, "shape")
+                or len(test_frame.shape) != 3
+                or test_frame.shape[0] <= 0
+                or test_frame.shape[1] <= 0
+                or test_frame.shape[2] < 3
+            ):
                 print(
-                    f"{backend_name} ไม่สามารถเปิด device ได้"
+                    f"{backend_name} ส่ง frame ที่ไม่ถูกต้อง: "
+                    f"{getattr(test_frame, 'shape', None)}"
                 )
+                new_cap.release()
+                continue
+
+            # ทำให้ numpy buffer เป็น contiguous
+            test_frame = np.ascontiguousarray(test_frame)
+
+            actual_h, actual_w = test_frame.shape[:2]
+
+            print(
+                f"เปิดกล้องสำเร็จด้วย {backend_name} "
+                f"({actual_w}x{actual_h})"
+            )
+
+            # สำคัญ: ไม่บังคับ 1280x720
+            # เพราะ DroidCam/Virtual Camera บาง driver
+            # จะทำให้ stream พังหลังเปลี่ยน resolution
+
+            return new_cap
+
+        except cv2.error as e:
+
+            print(
+                f"{backend_name} OpenCV error: {e}"
+            )
 
         except Exception as e:
 
@@ -576,8 +594,8 @@ def open_camera(idx):
 
         finally:
 
-            # อย่าปล่อย object ที่จะถูกคืนค่า
             if new_cap is not None:
+
                 try:
                     if not new_cap.isOpened():
                         new_cap.release()
@@ -976,13 +994,36 @@ print("\n")
 
 while True:
 
-    success, frame = cap.read()
+    try:
+        success, frame = cap.read()
 
-    if not success:
+        if success and frame is not None:
+            # ป้องกัน OpenCV error จาก buffer/stride ของบาง virtual camera
+            frame = np.ascontiguousarray(frame)
+
+    except cv2.error as e:
+
+        print(
+            f"OpenCV ไม่สามารถอ่านภาพจากกล้องได้: {e}"
+        )
+
+        success = False
+        frame = None
+
+    except Exception as e:
+
+        print(
+            f"เกิดข้อผิดพลาดขณะอ่านกล้อง: {e}"
+        )
+
+        success = False
+        frame = None
+
+    if not success or frame is None:
 
         print(
             "ไม่สามารถอ่านภาพจากกล้องได้ "
-            "(กล้องอาจหลุดการเชื่อมต่อ)"
+            "(กล้องอาจหลุดการเชื่อมต่อหรือ driver มีปัญหา)"
         )
 
         print(
