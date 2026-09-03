@@ -67,7 +67,7 @@ jobs:
       - name: Build FaceTracker EXE
         shell: cmd
         run: |
-          pyinstaller --onedir --name FaceTracker --collect-data mediapipe main.py
+          pyinstaller --onedir --name FaceTracker --collect-data mediapipe --hidden-import win32timezone --hidden-import win32com --hidden-import win32com.client --hidden-import pygrabber --hidden-import pygrabber.dshow_graph main.py
 
 
       # ==============================
